@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Logic Tree Builder for Fault Characterization</title>
+  <!-- Load D3.js from a CDN -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    /* Basic styling for nodes and links */
+    .node circle {
+      fill: #fff;
+      stroke: steelblue;
+      stroke-width: 3px;
+    }
+    .node text { 
+      font: 12px sans-serif; 
+    }
+    .link { 
+      fill: none; 
+      stroke: #ccc; 
+      stroke-width: 2px; 
+    }
+    body { 
+      font-family: Arial, sans-serif; 
+    }
+    #controls { margin: 10px; }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button id="exportBtn">Export Tree as JSON</button>
+  </div>
+  <div id="tree-container"></div>
+
+  <script>
+    // Set up SVG dimensions and margins
+    const margin = {top: 20, right: 120, bottom: 20, left: 120},
+          width = 960 - margin.right - margin.left,
+          height = 600 - margin.top - margin.bottom;
+
+    let i = 0,
+        duration = 750,
+        root;
+
+    // Create a tree layout with a fixed size
+    const tree = d3.tree().size([height, width]);
+
+    // Append an SVG element to our container
+    const svg = d3.select("#tree-container").append("svg")
+          .attr("width", width + margin.right + margin.left)
+          .attr("height", height + margin.top + margin.bottom)
+        .append("g")
+          .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+    // Initial tree data: a single root node
+    root = { name: "Root", children: [] };
+    root.x0 = height / 2;
+    root.y0 = 0;
+
+    // Render the tree for the first time
+    update(root);
+
+    // Main update function: (re)renders the tree structure
+    function update(source) {
+      // Convert our data into a d3.hierarchy and compute the new tree layout.
+      const nodes = d3.hierarchy(root),
+            treeData = tree(nodes);
+      
+      // Compute the new positions of the nodes and links.
+      const nodesArray = treeData.descendants(),
+            links = treeData.links();
+
+      // Set a fixed horizontal separation between levels.
+      nodesArray.forEach(d => d.y = d.depth * 180);
+
+      // **************** Nodes Section ****************
+
+      // Select all nodes and bind data
+      const node = svg.selectAll('g.node')
+          .data(nodesArray, d => d.id || (d.id = ++i));
+
+      // Enter new nodes at the parent's previous position.
+      const nodeEnter = node.enter().append('g')
+          .attr('class', 'node')
+          .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")")
+          .on('click', click);  // on click, prompt for actions
+
+      // Append a circle to represent the node.
+      nodeEnter.append('circle')
+          .attr('r', 1e-6)
+          .style("fill", "#fff");
+
+      // Append text (the node’s name).
+      nodeEnter.append('text')
+          .attr("dy", ".35em")
+          .attr("x", d => d.children || d._children ? -13 : 13)
+          .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+          .text(d => d.data.name);
+
+      // UPDATE
+      const nodeUpdate = nodeEnter.merge(node);
+
+      // Transition nodes to their new position.
+      nodeUpdate.transition()
+          .duration(duration)
+          .attr("transform", d => "translate(" + d.y + "," + d.x + ")");
+
+      // Update node circles.
+      nodeUpdate.select('circle')
+        .attr('r', 10)
+        .style("fill", "#fff")
+        .attr('cursor', 'pointer');
+
+      // Remove any exiting nodes.
+      const nodeExit = node.exit().transition()
+          .duration(duration)
+          .attr("transform", d => "translate(" + source.y + "," + source.x + ")")
+          .remove();
+
+      nodeExit.select('circle')
+        .attr('r', 1e-6);
+
+      nodeExit.select('text')
+        .style('fill-opacity', 1e-6);
+
+      // **************** Links Section ****************
+
+      // Update the links between nodes.
+      const link = svg.selectAll('path.link')
+          .data(links, d => d.target.id);
+
+      // Enter any new links at the parent's previous position.
+      const linkEnter = link.enter().insert('path', "g")
+          .attr("class", "link")
+          .attr('d', d => {
+            const o = { x: source.x0, y: source.y0 };
+            return diagonal(o, o);
+          });
+
+      // UPDATE
+      const linkUpdate = linkEnter.merge(link);
+
+      // Transition links to their new position.
+      linkUpdate.transition()
+          .duration(duration)
+          .attr('d', d => diagonal(d.source, d.target));
+
+      // Remove any exiting links.
+      const linkExit = link.exit().transition()
+          .duration(duration)
+          .attr('d', d => {
+            const o = { x: source.x, y: source.y };
+            return diagonal(o, o);
+          })
+          .remove();
+
+      // Save the old positions for transition.
+      nodesArray.forEach(d => {
+        d.x0 = d.x;
+        d.y0 = d.y;
+      });
+
+      // Helper function for drawing curved (diagonal) paths.
+      function diagonal(s, d) {
+        return "M " + s.y + " " + s.x +
+               " C " + (s.y + d.y) / 2 + " " + s.x + ", " +
+               (s.y + d.y) / 2 + " " + d.x + ", " + d.y + " " + d.x;
+      }
+    }
+
+    // Click handler for nodes.
+    function click(event, d) {
+      // Ask the user whether to add or delete a node.
+      const action = prompt("Type 'add' to add a child node or 'delete' to remove this node (root cannot be deleted).", "add");
+      if (action === "add") {
+        const childName = prompt("Enter the child node name:", "New Node");
+        if (!d.data.children) { d.data.children = []; }
+        d.data.children.push({ name: childName });
+        update(d);
+      } else if (action === "delete") {
+        if (d.data === root) {
+          alert("Cannot delete the root node.");
+          return;
+        }
+        // Remove the node by filtering it out from its parent's children.
+        removeNode(root, d.data.name);
+        update(root);
+      }
+    }
+
+    // Recursively search for and remove a node by name.
+    function removeNode(node, nodeName) {
+      if (node.children) {
+        node.children = node.children.filter(child => {
+          if (child.name === nodeName) {
+            return false;
+          } else {
+            removeNode(child, nodeName);
+            return true;
+          }
+        });
+      }
+    }
+
+    // Set up the Export button to download the tree structure as JSON.
+    document.getElementById("exportBtn").addEventListener("click", function(){
+      const json = JSON.stringify(root, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.download = "logic_tree.json";
+      a.href = url;
+      a.click();
+    });
+  </script>
+</body>
+</html>
