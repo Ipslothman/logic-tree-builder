@@ -2,207 +2,321 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Logic Tree Builder for Fault Characterization</title>
-  <!-- Load D3.js from a CDN -->
+  <title>Fault Logic Tree Builder</title>
+  <!-- Load D3.js -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
+  <!-- Load shp.js for shapefile parsing -->
+  <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
   <style>
-    /* Basic styling for nodes and links */
+    body {
+      font-family: Arial, sans-serif;
+    }
+    #controls {
+      margin: 10px;
+    }
+    #tree-container {
+      width: 960px;
+      height: 600px;
+      margin: auto;
+      border: 1px solid #ccc;
+    }
     .node circle {
       fill: #fff;
       stroke: steelblue;
       stroke-width: 3px;
     }
-    .node text { 
-      font: 12px sans-serif; 
+    .node text {
+      font: 12px sans-serif;
+      pointer-events: none;
     }
-    .link { 
-      fill: none; 
-      stroke: #ccc; 
-      stroke-width: 2px; 
+    .link {
+      fill: none;
+      stroke: #ccc;
+      stroke-width: 2px;
     }
-    body { 
-      font-family: Arial, sans-serif; 
+    /* A smaller text style for displaying branch details */
+    .detail-box {
+      font-size: 10px;
+      fill: #555;
     }
-    #controls { margin: 10px; }
   </style>
 </head>
 <body>
   <div id="controls">
+    <!-- Upload a zipped shapefile -->
+    <input type="file" id="shapefileUpload" accept=".zip" />
+    <!-- Export the tree JSON -->
     <button id="exportBtn">Export Tree as JSON</button>
   </div>
   <div id="tree-container"></div>
 
   <script>
-    // Set up SVG dimensions and margins
+    /***************************************
+     * Tree Setup and D3 Rendering
+     ***************************************/
     const margin = {top: 20, right: 120, bottom: 20, left: 120},
-          width = 960 - margin.right - margin.left,
+          width  = 960 - margin.right - margin.left,
           height = 600 - margin.top - margin.bottom;
 
-    let i = 0,
-        duration = 750,
-        root;
+    let i = 0, duration = 750, root;
 
-    // Create a tree layout with a fixed size
-    const tree = d3.tree().size([height, width]);
-
-    // Append an SVG element to our container
+    // Create the SVG container
     const svg = d3.select("#tree-container").append("svg")
           .attr("width", width + margin.right + margin.left)
           .attr("height", height + margin.top + margin.bottom)
         .append("g")
           .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
-    // Initial tree data: a single root node
-    root = { name: "Root", children: [] };
+    // Create a tree layout
+    const tree = d3.tree().size([height, width]);
+
+    // Initialize the root node
+    root = { name: "Faults", children: [] };
     root.x0 = height / 2;
     root.y0 = 0;
 
-    // Render the tree for the first time
+    // Initial rendering of the tree
     update(root);
 
-    // Main update function: (re)renders the tree structure
+    // Update (redraw) the tree
     function update(source) {
-      // Convert our data into a d3.hierarchy and compute the new tree layout.
-      const nodes = d3.hierarchy(root),
-            treeData = tree(nodes);
-      
-      // Compute the new positions of the nodes and links.
-      const nodesArray = treeData.descendants(),
-            links = treeData.links();
+      // Compute the new tree layout.
+      const treeData = tree(d3.hierarchy(root));
+      const nodes = treeData.descendants();
+      const links = treeData.links();
 
-      // Set a fixed horizontal separation between levels.
-      nodesArray.forEach(d => d.y = d.depth * 180);
+      // Set a fixed horizontal spacing between levels.
+      nodes.forEach(d => { d.y = d.depth * 180; });
 
-      // **************** Nodes Section ****************
-
-      // Select all nodes and bind data
+      // --- Nodes Section ---
       const node = svg.selectAll('g.node')
-          .data(nodesArray, d => d.id || (d.id = ++i));
+                      .data(nodes, d => d.id || (d.id = ++i));
 
-      // Enter new nodes at the parent's previous position.
+      // Enter any new nodes at the parent's previous position.
       const nodeEnter = node.enter().append('g')
-          .attr('class', 'node')
-          .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")")
-          .on('click', click);  // on click, prompt for actions
+                            .attr('class', 'node')
+                            .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")")
+                            .on('click', (event, d) => { editNodeDetails(d); });
 
-      // Append a circle to represent the node.
+      // Append circle to represent the node.
       nodeEnter.append('circle')
-          .attr('r', 1e-6)
-          .style("fill", "#fff");
+               .attr('r', 1e-6)
+               .style("fill", "#fff");
 
-      // Append text (the node’s name).
+      // Append text for the node name.
       nodeEnter.append('text')
-          .attr("dy", ".35em")
-          .attr("x", d => d.children || d._children ? -13 : 13)
-          .attr("text-anchor", d => d.children || d._children ? "end" : "start")
-          .text(d => d.data.name);
+               .attr("dy", ".35em")
+               .attr("x", d => d.children || d._children ? -13 : 13)
+               .attr("text-anchor", d => d.children || d._children ? "end" : "start")
+               .text(d => d.data.name);
 
-      // UPDATE
+      // Append a second text element to show the details (if any).
+      nodeEnter.append('text')
+               .attr("class", "detail-box")
+               .attr("dy", "1.75em")
+               .attr("x", d => d.children || d._children ? -13 : 13)
+               .text(d => getDetailText(d.data));
+
+      // UPDATE nodes
       const nodeUpdate = nodeEnter.merge(node);
 
-      // Transition nodes to their new position.
       nodeUpdate.transition()
-          .duration(duration)
-          .attr("transform", d => "translate(" + d.y + "," + d.x + ")");
+                .duration(duration)
+                .attr("transform", d => "translate(" + d.y + "," + d.x + ")");
 
-      // Update node circles.
       nodeUpdate.select('circle')
-        .attr('r', 10)
-        .style("fill", "#fff")
-        .attr('cursor', 'pointer');
+                .attr('r', 10)
+                .style("fill", "#fff");
+
+      nodeUpdate.select('text.detail-box')
+                .text(d => getDetailText(d.data));
 
       // Remove any exiting nodes.
       const nodeExit = node.exit().transition()
-          .duration(duration)
-          .attr("transform", d => "translate(" + source.y + "," + source.x + ")")
-          .remove();
+                         .duration(duration)
+                         .attr("transform", d => "translate(" + source.y + "," + source.x + ")")
+                         .remove();
 
       nodeExit.select('circle')
-        .attr('r', 1e-6);
+              .attr('r', 1e-6);
 
-      nodeExit.select('text')
-        .style('fill-opacity', 1e-6);
+      nodeExit.selectAll('text')
+              .style('fill-opacity', 1e-6);
 
-      // **************** Links Section ****************
-
-      // Update the links between nodes.
+      // --- Links Section ---
       const link = svg.selectAll('path.link')
-          .data(links, d => d.target.id);
+                      .data(links, d => d.target.id);
 
-      // Enter any new links at the parent's previous position.
       const linkEnter = link.enter().insert('path', "g")
-          .attr("class", "link")
-          .attr('d', d => {
-            const o = { x: source.x0, y: source.y0 };
-            return diagonal(o, o);
-          });
+                          .attr("class", "link")
+                          .attr('d', d => {
+                              const o = {x: source.x0, y: source.y0};
+                              return diagonal(o, o);
+                          });
 
-      // UPDATE
       const linkUpdate = linkEnter.merge(link);
-
-      // Transition links to their new position.
       linkUpdate.transition()
-          .duration(duration)
-          .attr('d', d => diagonal(d.source, d.target));
+                .duration(duration)
+                .attr('d', d => diagonal(d.source, d.target));
 
-      // Remove any exiting links.
       const linkExit = link.exit().transition()
-          .duration(duration)
-          .attr('d', d => {
-            const o = { x: source.x, y: source.y };
-            return diagonal(o, o);
-          })
-          .remove();
+                          .duration(duration)
+                          .attr('d', d => {
+                              const o = {x: source.x, y: source.y};
+                              return diagonal(o, o);
+                          })
+                          .remove();
 
-      // Save the old positions for transition.
-      nodesArray.forEach(d => {
-        d.x0 = d.x;
-        d.y0 = d.y;
+      // Save old positions for transition.
+      nodes.forEach(d => {
+          d.x0 = d.x;
+          d.y0 = d.y;
       });
-
-      // Helper function for drawing curved (diagonal) paths.
-      function diagonal(s, d) {
-        return "M " + s.y + " " + s.x +
-               " C " + (s.y + d.y) / 2 + " " + s.x + ", " +
-               (s.y + d.y) / 2 + " " + d.x + ", " + d.y + " " + d.x;
-      }
     }
 
-    // Click handler for nodes.
-    function click(event, d) {
-      // Ask the user whether to add or delete a node.
-      const action = prompt("Type 'add' to add a child node or 'delete' to remove this node (root cannot be deleted).", "add");
-      if (action === "add") {
-        const childName = prompt("Enter the child node name:", "New Node");
-        if (!d.data.children) { d.data.children = []; }
-        d.data.children.push({ name: childName });
-        update(d);
-      } else if (action === "delete") {
-        if (d.data === root) {
-          alert("Cannot delete the root node.");
-          return;
-        }
-        // Remove the node by filtering it out from its parent's children.
-        removeNode(root, d.data.name);
-        update(root);
-      }
+    // Diagonal path generator for links.
+    function diagonal(s, d) {
+      return "M " + s.y + " " + s.x +
+             " C " + (s.y + d.y) / 2 + " " + s.x +
+             ", " + (s.y + d.y) / 2 + " " + d.x +
+             ", " + d.y + " " + d.x;
     }
 
-    // Recursively search for and remove a node by name.
-    function removeNode(node, nodeName) {
-      if (node.children) {
-        node.children = node.children.filter(child => {
-          if (child.name === nodeName) {
-            return false;
-          } else {
-            removeNode(child, nodeName);
-            return true;
-          }
-        });
+    // Returns a string summarizing details stored in the node's data.
+    function getDetailText(data) {
+      let details = "";
+      // For Active/Inactive branches.
+      if(data.type === "active" || data.type === "inactive") {
+         details += "Weight: " + (data.weight != null ? data.weight : "");
       }
+      // For slip rate branches.
+      if(data.type === "minSlip" || data.type === "maxSlip") {
+         details += "Value: " + (data.value != null ? data.value : "") +
+                    ", Uncertainty: " + (data.uncertainty != null ? data.uncertainty : "") +
+                    ", Weight: " + (data.weight != null ? data.weight : "");
+      }
+      // For dip angle.
+      if(data.type === "angle") {
+         details += "Angle: " + (data.value != null ? data.value : "") +
+                    ", Weight: " + (data.weight != null ? data.weight : "");
+      }
+      // For dip direction.
+      if(data.type === "direction") {
+         details += "Dir: " + (data.value != null ? data.value : "") +
+                    ", Weight: " + (data.weight != null ? data.weight : "");
+      }
+      return details;
     }
 
-    // Set up the Export button to download the tree structure as JSON.
+    /***************************************
+     * Editing Node Details
+     ***************************************/
+    // When a node is clicked, prompt the user to update its properties.
+    function editNodeDetails(d) {
+      // If the node is the root ("Faults"), instruct the user.
+      if(d.data.name === "Faults") {
+         alert("Please upload a shapefile to populate fault branches.");
+         return;
+      }
+
+      // Use the node's type to decide which parameters to edit.
+      switch(d.data.type) {
+        case "fault":
+          // Optional: allow editing of the fault name.
+          const newName = prompt("Enter fault name:", d.data.name);
+          if(newName) { d.data.name = newName; }
+          break;
+        case "active":
+        case "inactive":
+          var weight = prompt("Enter weight for the '" + d.data.name + "' branch:", d.data.weight || "");
+          if(weight !== null) { d.data.weight = parseFloat(weight); }
+          break;
+        case "minSlip":
+        case "maxSlip":
+          var value = prompt("Enter slip rate value for '" + d.data.name + "':", d.data.value || "");
+          var uncertainty = prompt("Enter uncertainty for '" + d.data.name + "':", d.data.uncertainty || "");
+          var slipWeight = prompt("Enter weight for '" + d.data.name + "':", d.data.weight || "");
+          if(value !== null) { d.data.value = parseFloat(value); }
+          if(uncertainty !== null) { d.data.uncertainty = parseFloat(uncertainty); }
+          if(slipWeight !== null) { d.data.weight = parseFloat(slipWeight); }
+          break;
+        case "angle":
+          var angle = prompt("Enter dip angle for '" + d.data.name + "':", d.data.value || "");
+          var angleWeight = prompt("Enter weight for '" + d.data.name + "':", d.data.weight || "");
+          if(angle !== null) { d.data.value = parseFloat(angle); }
+          if(angleWeight !== null) { d.data.weight = parseFloat(angleWeight); }
+          break;
+        case "direction":
+          var direction = prompt("Enter dip direction (N, S, E, W) for '" + d.data.name + "':", d.data.value || "");
+          var dirWeight = prompt("Enter weight for '" + d.data.name + "':", d.data.weight || "");
+          if(direction !== null) { d.data.value = direction.toUpperCase(); }
+          if(dirWeight !== null) { d.data.weight = parseFloat(dirWeight); }
+          break;
+        default:
+          // For any node without a predefined type, you could add custom editing here.
+          break;
+      }
+      update(d);
+    }
+
+    /***************************************
+     * Shapefile Upload & Tree Population
+     ***************************************/
+    // Listen for a shapefile upload (expecting a zipped shapefile).
+    document.getElementById("shapefileUpload").addEventListener("change", function(evt) {
+      const file = evt.target.files[0];
+      if(file) {
+         const reader = new FileReader();
+         reader.onload = function(e) {
+            const arrayBuffer = e.target.result;
+            // Use shp.js to parse the zipped shapefile into GeoJSON.
+            shp(arrayBuffer).then(function(geojson) {
+              let features = [];
+              if(geojson.type === "FeatureCollection") {
+                features = geojson.features;
+              } else if(Array.isArray(geojson)) {
+                features = geojson;
+              }
+              // For each feature (fault polyline), add a fault branch.
+              features.forEach((feature, index) => {
+                // Try to extract a fault name from properties; otherwise use a default.
+                let faultName = feature.properties && (feature.properties.name || feature.properties.fault_name) ?
+                                (feature.properties.name || feature.properties.fault_name) : "Fault " + (index+1);
+                // Create a fault node with the required sub–branches.
+                const faultNode = {
+                  name: faultName,
+                  type: "fault",
+                  children: [
+                    { name: "Active", type: "active", weight: 1 },
+                    { name: "Inactive", type: "inactive", weight: 0 },
+                    { name: "Slip Rate", children: [
+                        { name: "Min Slip Rate", type: "minSlip", value: null, uncertainty: null, weight: 1 },
+                        { name: "Max Slip Rate", type: "maxSlip", value: null, uncertainty: null, weight: 1 }
+                      ]
+                    },
+                    { name: "Dip", children: [
+                        { name: "Dip Angle", type: "angle", value: null, weight: 1 },
+                        { name: "Dip Direction", type: "direction", value: null, weight: 1 }
+                      ]
+                    }
+                  ]
+                };
+                // Add the fault node as a child of the root.
+                root.children.push(faultNode);
+              });
+              update(root);
+            }).catch(function(error) {
+              console.error("Error reading shapefile:", error);
+              alert("Error reading shapefile. Please ensure it is a valid zipped shapefile.");
+            });
+         };
+         reader.readAsArrayBuffer(file);
+      }
+    });
+
+    /***************************************
+     * Export the Tree Structure as JSON
+     ***************************************/
     document.getElementById("exportBtn").addEventListener("click", function(){
       const json = JSON.stringify(root, null, 2);
       const blob = new Blob([json], { type: "application/json" });
