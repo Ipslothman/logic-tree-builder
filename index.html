@@ -273,10 +273,11 @@
               features.forEach((feature, index) => {
                 let faultName = feature.properties && (feature.properties.name || feature.properties.fault_name) ?
                                 (feature.properties.name || feature.properties.fault_name) : "Fault " + (index+1);
-                // Create a fault node with sub–branches.
+                // Create a fault node with sub–branches and include the geometry property.
                 const faultNode = {
                   name: faultName,
                   type: "fault",
+                  geometry: feature.geometry,  // <== This property contains the lat/lon coordinates
                   children: [
                     { name: "Active", type: "active", weight: 1 },
                     { name: "Inactive", type: "inactive", weight: 0 },
