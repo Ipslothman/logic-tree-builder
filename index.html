@@ -2,43 +2,36 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Fault Logic Tree Builder</title>
+  <title>Fault Logic Tree Builder with Map</title>
   <!-- Load D3.js -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <!-- Load shp.js for shapefile parsing -->
   <script src="https://unpkg.com/shpjs@latest/dist/shp.min.js"></script>
+  <!-- Load Leaflet CSS and JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <style>
-    body {
-      font-family: Arial, sans-serif;
+    body { font-family: Arial, sans-serif; }
+    #controls { margin: 10px; text-align: center; }
+    /* Map container styling */
+    #map {
+      width: 960px;
+      height: 400px;
+      margin: 10px auto;
+      border: 1px solid #ccc;
     }
-    #controls {
-      margin: 10px;
-    }
+    /* Tree container styling */
     #tree-container {
       width: 960px;
       height: 600px;
-      margin: auto;
+      margin: 10px auto;
       border: 1px solid #ccc;
     }
-    .node circle {
-      fill: #fff;
-      stroke: steelblue;
-      stroke-width: 3px;
-    }
-    .node text {
-      font: 12px sans-serif;
-      pointer-events: none;
-    }
-    .link {
-      fill: none;
-      stroke: #ccc;
-      stroke-width: 2px;
-    }
-    /* A smaller text style for displaying branch details */
-    .detail-box {
-      font-size: 10px;
-      fill: #555;
-    }
+    /* D3 Tree styling */
+    .node circle { fill: #fff; stroke: steelblue; stroke-width: 3px; }
+    .node text { font: 12px sans-serif; pointer-events: none; }
+    .link { fill: none; stroke: #ccc; stroke-width: 2px; }
+    .detail-box { font-size: 10px; fill: #555; }
   </style>
 </head>
 <body>
@@ -48,44 +41,63 @@
     <!-- Export the tree JSON -->
     <button id="exportBtn">Export Tree as JSON</button>
   </div>
+  
+  <!-- Map container -->
+  <div id="map"></div>
+  
+  <!-- Tree container -->
   <div id="tree-container"></div>
-
+  
   <script>
-    /***************************************
+    /***********************************************
+     * Initialize Leaflet Map
+     ***********************************************/
+    const map = L.map('map').setView([37.0, -120.0], 5); // initial center & zoom
+
+    // Use OpenTopoMap tiles for a topographic OSM layer
+    L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+      maxZoom: 17,
+      attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors, <a href="https://opentopomap.org">OpenTopoMap</a>'
+    }).addTo(map);
+
+    // Create a layer group for fault features
+    const faultLayer = L.geoJSON(null, {
+      style: { color: "red", weight: 2 }
+    }).addTo(map);
+
+    /***********************************************
      * Tree Setup and D3 Rendering
-     ***************************************/
+     ***********************************************/
     const margin = {top: 20, right: 120, bottom: 20, left: 120},
           width  = 960 - margin.right - margin.left,
           height = 600 - margin.top - margin.bottom;
 
     let i = 0, duration = 750, root;
 
-    // Create the SVG container
+    // Create an SVG element for the logic tree
     const svg = d3.select("#tree-container").append("svg")
           .attr("width", width + margin.right + margin.left)
           .attr("height", height + margin.top + margin.bottom)
         .append("g")
           .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
-    // Create a tree layout
+    // Create a D3 tree layout
     const tree = d3.tree().size([height, width]);
 
-    // Initialize the root node
+    // Initialize the logic tree root
     root = { name: "Faults", children: [] };
     root.x0 = height / 2;
     root.y0 = 0;
 
-    // Initial rendering of the tree
     update(root);
 
-    // Update (redraw) the tree
+    // Update (redraw) the tree layout
     function update(source) {
-      // Compute the new tree layout.
       const treeData = tree(d3.hierarchy(root));
       const nodes = treeData.descendants();
       const links = treeData.links();
 
-      // Set a fixed horizontal spacing between levels.
+      // Set a fixed horizontal separation between levels.
       nodes.forEach(d => { d.y = d.depth * 180; });
 
       // --- Nodes Section ---
@@ -98,7 +110,7 @@
                             .attr("transform", d => "translate(" + source.y0 + "," + source.x0 + ")")
                             .on('click', (event, d) => { editNodeDetails(d); });
 
-      // Append circle to represent the node.
+      // Append circle for each node.
       nodeEnter.append('circle')
                .attr('r', 1e-6)
                .style("fill", "#fff");
@@ -110,7 +122,7 @@
                .attr("text-anchor", d => d.children || d._children ? "end" : "start")
                .text(d => d.data.name);
 
-      // Append a second text element to show the details (if any).
+      // Append a detail box (second text element) for node details.
       nodeEnter.append('text')
                .attr("class", "detail-box")
                .attr("dy", "1.75em")
@@ -119,15 +131,12 @@
 
       // UPDATE nodes
       const nodeUpdate = nodeEnter.merge(node);
-
       nodeUpdate.transition()
                 .duration(duration)
                 .attr("transform", d => "translate(" + d.y + "," + d.x + ")");
-
       nodeUpdate.select('circle')
                 .attr('r', 10)
                 .style("fill", "#fff");
-
       nodeUpdate.select('text.detail-box')
                 .text(d => getDetailText(d.data));
 
@@ -136,29 +145,22 @@
                          .duration(duration)
                          .attr("transform", d => "translate(" + source.y + "," + source.x + ")")
                          .remove();
-
-      nodeExit.select('circle')
-              .attr('r', 1e-6);
-
-      nodeExit.selectAll('text')
-              .style('fill-opacity', 1e-6);
+      nodeExit.select('circle').attr('r', 1e-6);
+      nodeExit.selectAll('text').style('fill-opacity', 1e-6);
 
       // --- Links Section ---
       const link = svg.selectAll('path.link')
                       .data(links, d => d.target.id);
-
       const linkEnter = link.enter().insert('path', "g")
                           .attr("class", "link")
                           .attr('d', d => {
                               const o = {x: source.x0, y: source.y0};
                               return diagonal(o, o);
                           });
-
       const linkUpdate = linkEnter.merge(link);
       linkUpdate.transition()
                 .duration(duration)
                 .attr('d', d => diagonal(d.source, d.target));
-
       const linkExit = link.exit().transition()
                           .duration(duration)
                           .attr('d', d => {
@@ -167,14 +169,14 @@
                           })
                           .remove();
 
-      // Save old positions for transition.
+      // Save old positions for transitions.
       nodes.forEach(d => {
           d.x0 = d.x;
           d.y0 = d.y;
       });
     }
 
-    // Diagonal path generator for links.
+    // Diagonal generator for links.
     function diagonal(s, d) {
       return "M " + s.y + " " + s.x +
              " C " + (s.y + d.y) / 2 + " " + s.x +
@@ -182,25 +184,21 @@
              ", " + d.y + " " + d.x;
     }
 
-    // Returns a string summarizing details stored in the node's data.
+    // Generate a summary text for node details.
     function getDetailText(data) {
       let details = "";
-      // For Active/Inactive branches.
       if(data.type === "active" || data.type === "inactive") {
          details += "Weight: " + (data.weight != null ? data.weight : "");
       }
-      // For slip rate branches.
       if(data.type === "minSlip" || data.type === "maxSlip") {
          details += "Value: " + (data.value != null ? data.value : "") +
                     ", Uncertainty: " + (data.uncertainty != null ? data.uncertainty : "") +
                     ", Weight: " + (data.weight != null ? data.weight : "");
       }
-      // For dip angle.
       if(data.type === "angle") {
          details += "Angle: " + (data.value != null ? data.value : "") +
                     ", Weight: " + (data.weight != null ? data.weight : "");
       }
-      // For dip direction.
       if(data.type === "direction") {
          details += "Dir: " + (data.value != null ? data.value : "") +
                     ", Weight: " + (data.weight != null ? data.weight : "");
@@ -208,21 +206,14 @@
       return details;
     }
 
-    /***************************************
-     * Editing Node Details
-     ***************************************/
     // When a node is clicked, prompt the user to update its properties.
     function editNodeDetails(d) {
-      // If the node is the root ("Faults"), instruct the user.
       if(d.data.name === "Faults") {
          alert("Please upload a shapefile to populate fault branches.");
          return;
       }
-
-      // Use the node's type to decide which parameters to edit.
       switch(d.data.type) {
         case "fault":
-          // Optional: allow editing of the fault name.
           const newName = prompt("Enter fault name:", d.data.name);
           if(newName) { d.data.name = newName; }
           break;
@@ -253,23 +244,21 @@
           if(dirWeight !== null) { d.data.weight = parseFloat(dirWeight); }
           break;
         default:
-          // For any node without a predefined type, you could add custom editing here.
           break;
       }
       update(d);
     }
 
-    /***************************************
-     * Shapefile Upload & Tree Population
-     ***************************************/
-    // Listen for a shapefile upload (expecting a zipped shapefile).
+    /***********************************************
+     * Shapefile Upload & Processing
+     ***********************************************/
     document.getElementById("shapefileUpload").addEventListener("change", function(evt) {
       const file = evt.target.files[0];
       if(file) {
          const reader = new FileReader();
          reader.onload = function(e) {
             const arrayBuffer = e.target.result;
-            // Use shp.js to parse the zipped shapefile into GeoJSON.
+            // Parse the zipped shapefile using shp.js.
             shp(arrayBuffer).then(function(geojson) {
               let features = [];
               if(geojson.type === "FeatureCollection") {
@@ -277,12 +266,14 @@
               } else if(Array.isArray(geojson)) {
                 features = geojson;
               }
-              // For each feature (fault polyline), add a fault branch.
+              // Clear previous faultLayer features and logic tree children.
+              faultLayer.clearLayers();
+              root.children = [];
+              // Process each feature (fault polyline).
               features.forEach((feature, index) => {
-                // Try to extract a fault name from properties; otherwise use a default.
                 let faultName = feature.properties && (feature.properties.name || feature.properties.fault_name) ?
                                 (feature.properties.name || feature.properties.fault_name) : "Fault " + (index+1);
-                // Create a fault node with the required sub–branches.
+                // Create a fault node with sub–branches.
                 const faultNode = {
                   name: faultName,
                   type: "fault",
@@ -301,10 +292,15 @@
                     }
                   ]
                 };
-                // Add the fault node as a child of the root.
                 root.children.push(faultNode);
               });
               update(root);
+              // Add the GeoJSON features to the map.
+              faultLayer.addData(geojson);
+              // Adjust the map view to fit the fault features.
+              if (faultLayer.getBounds().isValid()) {
+                map.fitBounds(faultLayer.getBounds());
+              }
             }).catch(function(error) {
               console.error("Error reading shapefile:", error);
               alert("Error reading shapefile. Please ensure it is a valid zipped shapefile.");
@@ -314,9 +310,9 @@
       }
     });
 
-    /***************************************
+    /***********************************************
      * Export the Tree Structure as JSON
-     ***************************************/
+     ***********************************************/
     document.getElementById("exportBtn").addEventListener("click", function(){
       const json = JSON.stringify(root, null, 2);
       const blob = new Blob([json], { type: "application/json" });
